@@ -1,0 +1,1021 @@
+##################### functions library ##########################
+
+#### UI Functions ####
+
+
+
+
+create_vector_db<-function(text_directory = 'book_test', block_length=5, abstraction = 0.7){
+  
+  #setup
+  suppressWarnings(library(tidyverse))
+  suppressWarnings(library(tidytext))
+  options(dplyr.summarise.inform = FALSE)
+
+  #testing block
+  #text_directory='book_test'
+  
+  #read in the data
+  stop_words<-read.csv("custom_stop_words.csv")
+  source('arclight_functions.R')
+  
+  #read raw text files in directory and format
+  raw_text_df<-make_text_df(text_directory)
+
+  #make a dataframe of split-out sentences
+  sentence_df<-split_sentences(input_text = raw_text_df$Text, id_col=raw_text_df$Doc, block_size=10)
+  
+  #make a dataframe of split-out words
+  word_df<-split_words(sentence_col = sentence_df$sentence, doc_id_col = sentence_df$doc, line_id_col = sentence_df$block)
+  
+  
+  #calculate tf-idf scores
+  abstract_tf_idf<-calc_baseline_tf_idf(word_data_frame = word_df, word_col = "word", line_col="block")
+  
+  #turn the list of scores into a large matrix
+  tfidf_matrix<-make_tf_idf_matrix(existing_tf_idf = abstract_tf_idf,word_col="word", line_col="block")
+  
+  #embed in low dim
+  embedding<-map_to_low_dim(existing_tf_mat = tfidf_matrix, variance_threshold = abstraction)
+  
+  study_db<-list(sentence_df=sentence_df, word_df= word_df,abstract_tf_idf = abstract_tf_idf, tfidf_matrix=tfidf_matrix, embedding = embedding)
+  print("Database Ready!")
+  return(study_db)
+}
+
+
+ask_query<-function(existing_vector_db){
+  source('arclight_functions.R')
+  
+  #testing block
+  #query_string<-"what happened to smallpox" 
+  #existing_vector_db<-study_db
+  
+  #ask query
+  query_string<-readline("What do you want to know?")
+  
+  
+  
+  existing_vector_db<-existing_vector_db
+  sentence_df<-existing_vector_db$sentence_df  
+  word_df<-existing_vector_db$word_df
+  abstract_tf_idf<-existing_vector_db$abstract_tf_idf
+  tfidf_matrix<-existing_vector_db$tfidf_matrix
+  embedding<-existing_vector_db$embedding
+  
+  
+  n_returns<-readline("How many returns?")
+
+
+   #add query to the database
+    query_embed<-add_new_strings_2(new_string = query_string, new_string_id = "Q", existing_vector_db = existing_vector_db)
+
+    
+    #get results in dataframe form
+    qc1_results<-query_returns_2(existing_vector_db=existing_vector_db, center_query_df=query_embed)
+    
+    #format into sourced list form
+    query_return<-format_return(results_df=qc1_results)[1:n_returns]
+    
+    
+    return(query_return)
+    
+}
+
+
+################### helper functions ##############
+
+#### make text dataframe
+
+make_text_df<-function(directory_name='book_test'){
+  
+  directory_path<-paste0(getwd(),"/",directory_name)
+  
+  docs<-list.files(path=directory_path)
+  
+  clean_df<-data.frame(matrix(nrow=length(docs), ncol=2))
+  colnames(clean_df)<-c("Doc","Text")
+  
+  for (i in 1:length(docs)){
+    dtr<-docs[i]
+    loc<-paste0(directory_path,"/",dtr)
+    txt<-paste(readLines(loc), collapse = " ")
+    clean_df[i,1]<-dtr
+    clean_df[i,2]<-txt%>%
+      str_replace_all("\\s+NA\\s+","")%>%
+      str_replace_all("REFERENCES[:]?\\s+.*","")%>%
+      str_replace_all("References[:]?\\s+.*","")
+  }
+  
+  return(clean_df)
+  
+}
+
+#### split sentences ####
+
+split_sentences<-function(input_text, id_col, block_size){
+  ###testing block
+  #input_text<-text_col
+  #id_col<-doc_col
+  
+  sent_patt<-"(?<=[a-z]{2,3}?)[.?!]\\s+(?=[A-Z])"
+  #sent_patt<-"[.?!:]\\s+(?=[A-Z])"
+  noise_patt<-"[.?!:][0-9]+[,-]?[0-9]*"
+  
+  
+  new_df<-data.frame()
+  
+  for (i in 1:length(input_text)){
+    doc_id<-id_col[i]
+    abs_text<-input_text[i]
+    
+    
+    
+    doc_df<-abs_text%>%
+      str_split(sent_patt)%>%
+      unlist()%>%
+      as.data.frame()%>%
+      mutate(doc = doc_id)
+    
+    new_df<-rbind(new_df, doc_df)
+  }
+  
+  new_df$line<-paste0("line_",seq_along(1:nrow(new_df)))
+  names(new_df)[names(new_df)== "."]<-"sentence"
+  new_df$row_nr<-seq_along(1:nrow(new_df))
+  new_df$block<-paste0("block_",floor(new_df$row_nr/block_size))
+  #new_df$sentence<-apply(new_df$sentence,1,function(x) paste0(x,"."))
+  
+  return(new_df)
+}
+
+
+
+split_sentences_text<-function(input_text, block_size, doc_name){
+  ###testing block
+  #input_text<-text_col
+  #id_col<-doc_col
+  
+  #sent_patt<-"(?<=\\s[a-z]{2,})[.?!]\\s+(?=[A-Z])"
+  sent_patt<-"[.?!:]\\s+(?=[A-Z])"
+  noise_patt<-"[.?!:][0-9]+[,-]?[0-9]*"
+  
+  
+  new_df<-input_text%>%
+      #str_replace_all(noise_patt, ". ")%>%
+      str_split(sent_patt)%>%
+      unlist()%>%
+      as.data.frame()
+
+  new_df$doc_id<-doc_name
+  new_df$line<-paste0("line_",seq_along(1:nrow(new_df)))
+  names(new_df)[names(new_df)== "."]<-"sentence"
+  new_df$row_nr<-seq_along(1:nrow(new_df))
+  new_df$block<-paste0("block_",floor(new_df$row_nr/block_size))
+  
+  return(new_df)
+}
+#### split words ####
+
+split_words<-function(sentence_col, doc_id_col, line_id_col){
+  
+  ##testing block
+  #sentence_col = sentence_df$sentence
+  #doc_id_col = sentence_df$doc
+  #line_id_col = sentence_df$line
+  #i=1
+  
+  stop_words<-read.csv('custom_stop_words.csv')
+  word_patt<-"\\s+"
+  punct_patt<-"[^\\w\\s]+"
+  
+  word_df<-data.frame()
+  
+  for (i in 1:length(sentence_col)){
+    doc_id<-doc_id_col[i]
+    sentence_id<-line_id_col[i]
+    sent_text<-sentence_col[i]
+    
+    temp_df<-sent_text%>%
+      str_to_lower()%>%
+      str_replace_all(punct_patt, "")%>%
+      str_split(word_patt)%>%
+      unlist()%>%
+      as.data.frame()%>%
+      mutate(doc = doc_id,
+             line = sentence_id)
+    word_df<-rbind(word_df, temp_df)
+    
+  }
+  
+  names(word_df)[names(word_df)== "."]<-"word"
+  
+  word_df$word<-na_if(word_df$word,"")
+  
+  word_df<-word_df%>%anti_join(stop_words, by = 'word')%>%drop_na()
+  
+
+  
+  return(word_df)
+}
+
+#### split words from text ####
+split_words_text<-function(sentence_col, doc_id_col){
+  
+  ##testing block
+  #sentence_col = sentence_df$sentence
+  #doc_id_col = sentence_df$doc
+  #line_id_col = sentence_df$line
+  #i=1
+  
+  stop_words<-read.csv('custom_stop_words.csv')
+  word_patt<-"\\s+"
+  punct_patt<-"[^\\w\\s]+"
+  
+  word_df<-data.frame()
+  
+  for (i in 1:length(sentence_col)){
+    doc_id<-doc_id_col[i]
+    sent_text<-sentence_col[i]
+    
+    temp_df<-sent_text%>%
+      str_to_lower()%>%
+      str_replace_all(punct_patt, "")%>%
+      str_split(word_patt)%>%
+      unlist()%>%
+      as.data.frame()%>%
+      mutate(doc = doc_id)
+    word_df<-rbind(word_df, temp_df)
+    
+  }
+  
+  names(word_df)[names(word_df)== "."]<-"word"
+  
+  word_df$word<-na_if(word_df$word,"")
+  
+  word_df<-word_df%>%anti_join(stop_words, by = 'word')%>%drop_na()
+  
+  
+  
+  return(word_df)
+}
+
+
+#### term document / inverse document frequency calc####
+
+calc_baseline_tf_idf<-function(word_data_frame, word_col, line_col){
+  ##Note: this function takes strings as word_col and line_col arguments!!!!!
+  
+  ##testing block
+  #word_data_frame<-word_df
+  #word_col<-"word"
+  #line_col<-"doc"
+  
+  
+  
+  names(word_data_frame)[names(word_data_frame)== word_col]<-"word"
+  names(word_data_frame)[names(word_data_frame)==line_col]<-"line"
+  
+  
+  tf_df<-word_data_frame%>%
+    group_by(line, word)%>%
+    summarize(n())
+  
+  
+  names(tf_df)[names(tf_df)=="n()"]<-"count" # # of times that word occurs in a block
+  
+  tf_total<-tf_df%>%
+    group_by(line)%>%
+    summarize(sum(count))
+  
+  names(tf_total)[names(tf_total)=="sum(count)"]<-"total" # # of words in that block
+  
+  idf_df<-word_data_frame%>%
+    group_by(word)%>%
+    summarize(n_distinct(line))
+  
+  names(idf_df)[names(idf_df)=="n_distinct(line)"]<-"line_count" # # of blocks/lines the word is used in
+  
+  tf_idf_df<-tf_df%>%
+    left_join(tf_total, by = "line")%>%
+    left_join(idf_df, by = "word")
+  
+  tf_idf_df$tf_idf<-log((tf_idf_df$count/tf_idf_df$total)*(1/tf_idf_df$line_count))
+  
+  tf_idf_df<-tf_idf_df[(tf_idf_df$line_count>1 & tf_idf_df$total>1),]
+  
+  return(tf_idf_df)
+}
+
+#### transform into wide dataframe ####
+
+make_tf_idf_matrix<-function(existing_tf_idf, word_col, line_col){
+  
+  ### testing block
+  #existing_tf_idf<-abstract_tf_idf
+  #word_col<-"word"
+  #line_col<-"line"
+  
+  names(existing_tf_idf)[names(existing_tf_idf)== word_col]<-"word"
+  names(existing_tf_idf)[names(existing_tf_idf)==line_col]<-"line"
+  
+  
+  vocab<-existing_tf_idf$word%>%unique()
+  col_length<-length(vocab)
+  doc_list<-existing_tf_idf$line%>%unique()
+  row_length<-length(doc_list)
+  
+  
+  tf_mat<-matrix(data=NA, nrow=row_length, ncol=col_length)
+  
+  rownames(tf_mat)<-doc_list
+  colnames(tf_mat)<-vocab
+  
+  for (i in 1:nrow(existing_tf_idf)){
+    r<-existing_tf_idf[i,1]%>%unlist()
+    c<-existing_tf_idf[i,2]%>%unlist()
+    v<-existing_tf_idf[i,6]%>%unlist()
+    tf_mat[r,c]<-v
+  }
+  
+  
+  tf_mat[is.na(tf_mat)]<-0
+  
+  return(tf_mat)
+}
+
+
+#### Add new strings ####
+
+add_new_strings_2<-function(new_string, new_string_id, existing_vector_db){
+  #### testing block#
+  #new_string<-"Protein recommendations updates new guidelines american diet"
+  #new_string_id<-'Q'
+  #existing_vector_db<-study_db
+  
+  existing_tf_idf<-existing_vector_db$abstract_tf_idf
+  existing_tf_mat<-existing_vector_db$tfidf_matrix
+  existing_embedding<-existing_vector_db$embedding
+  
+  word_patt<-"\\s+"
+  punct_patt<-"[^\\w\\s]+"
+  
+  query_df<-new_string%>%
+    str_to_lower()%>%
+    str_replace_all(punct_patt,"")%>%
+    str_split(word_patt)%>%
+    unlist()%>%
+    as.data.frame()
+  
+  colnames(query_df)<-"word"
+  query_marker=rep(new_string_id, times=nrow(query_df))
+  
+  query_tf<-query_df%>%
+    mutate(query=query_marker)%>%
+    group_by(word)%>%
+    summarize(n())
+  
+  query_tf$total<-sum(query_tf$`n()`)
+  names(query_tf)[names(query_tf)=="n()"]<-'count'
+  
+  temp_idf_df<-existing_tf_idf%>%
+    ungroup()%>%
+    select(word, line_count)
+  
+  query_tf_idf<-query_tf%>%
+    inner_join(temp_idf_df, by="word")
+  
+  error_message<-"query not in source data"
+  if(nrow(query_tf_idf) == 0){
+    return(error_message)
+  } else {
+    
+    
+    query_tf_idf$tf_idf<-log((query_tf_idf$count/query_tf_idf$total)*(1/query_tf_idf$line_count))
+    
+    query_list<-query_tf_idf$word%>%unique()
+    query_length<-length(query_list)
+    
+    col_length<-ncol(existing_tf_mat)
+    
+    query_mat<-matrix(data=NA, nrow = 1, ncol=col_length) #same vocab list as above
+    
+    colnames(query_mat)<-colnames(existing_tf_mat)
+    rownames(query_mat)<-new_string_id
+    
+    for (i in 1:nrow(query_tf_idf)){
+      c<-query_tf_idf[i,1]%>%unlist()
+      v<-query_tf_idf[i,5]%>%unlist()
+      query_mat[1,c]<-v
+    }
+    
+    query_mat[is.na(query_mat)]<-0
+    
+    embed_rows<-nrow(existing_embedding$loading_scores)
+    embed_cols<-ncol(existing_embedding$loading_scores)
+    
+    load_mat<-data.matrix(existing_embedding$loading_scores)
+    
+    rotated_q<-query_mat %*% load_mat
+    
+    query_mat<-rotated_q[,1:ncol(existing_embedding$pc_df)]
+    
+    return(query_mat)
+  }
+}
+
+#### Singular Value Decomposition ########
+
+map_to_low_dim<-function(existing_tf_mat, variance_threshold){
+  ## testing block
+  #existing_tf_mat<-tfidf_matrix
+  #variance_threshold<-0.5
+  
+  
+  SVD_out<-svd(existing_tf_mat)
+  
+  #calculate % of total variance for each PC
+  total_variance<-sum(SVD_out$d^2)
+  eigenvalues<-as.data.frame(SVD_out$d^2)%>%mutate(cum_var=cumsum(`SVD_out$d^2`))%>%
+    mutate(percent_total=cum_var/total_variance)
+  
+  pc_list<-paste0("PC",seq_along(1:nrow(eigenvalues)))
+  
+  plot(eigenvalues$percent_total, ylab="% of variance explained")
+  
+  ncomp<-min(which(eigenvalues$percent_total>=variance_threshold))
+  
+  loading_scores<-as.data.frame(SVD_out$v)
+  colnames(loading_scores)<-pc_list
+  rownames(loading_scores)<-colnames(existing_tf_mat)
+  
+  pc_df<-as.data.frame(SVD_out$u %*% diag(SVD_out$d))
+  rownames(pc_df)<-rownames(existing_tf_mat)
+  colnames(pc_df)<-pc_list
+  
+  short_pc_df<-pc_df[,1:ncomp]
+  
+  low_dim_output<-list("eigenvalues" = eigenvalues, "loading_scores"=loading_scores, "pc_df"=short_pc_df)
+  
+  return(low_dim_output)
+  
+}
+
+#### cosine similarity ####
+
+cosine_sim<-function(vector_1, vector_2){
+  v1N<-sum(vector_1^2)
+  v2N<-sum(vector_2^2)
+  dt_prod<-vector_1 %*% vector_2
+  
+  return(dt_prod/(sqrt(v1N) * sqrt(v2N)))
+}
+
+
+
+#### query returns #####
+
+query_returns_2<-function(existing_vector_db, center_query_df){
+  
+  #test block
+  #existing_vector_db<-study_db
+  #center_query_df<-query_embed
+  
+  existing_embedding<-existing_vector_db$embedding
+  existing_sentence_df<-existing_vector_db$sentence_df
+  
+  #error handling for absent query terms
+  
+  qc_loc_df<-center_query_df
+  other_vectors<-existing_embedding$pc_df
+
+  
+  dist_matrix<-matrix(nrow = nrow(other_vectors), ncol=1)
+  
+  
+  for (i in 1:nrow(other_vectors)){
+      center_str<-as.numeric(center_query_df) #modify length for semantic vs keyword search
+    
+      line_tmp<-as.numeric(other_vectors[i,])  #same here
+    
+      cosine_similarity<-cosine_sim(center_str, line_tmp)
+    
+      dist_matrix[i,1]<-cosine_similarity
+    
+    }
+
+  
+  q_df<-as.data.frame(dist_matrix)
+  colnames(q_df)<-c("center_embed")
+  rownames(q_df)<-rownames(other_vectors)
+  q_df[is.na(q_df)]<-0
+  score_df<-q_df[order(-q_df$center_embed), ,drop=FALSE]
+  score_df$block<-row.names(score_df)
+  threshold<-mean(score_df$center_embed)+(2*(sd(score_df$center_embed)))
+  top_scores<-row.names(score_df)[score_df$center_embed >= threshold]
+  test_rtn<-existing_sentence_df[which(existing_sentence_df$block %in% top_scores),]%>%
+    left_join(score_df, by="block")%>%
+    arrange(desc(center_embed), line)
+  
+  
+  ## test ##
+  #hist(score_df$center_embed)
+  #plot(score_df$center_embed)
+  #abline(h=threshold)
+  
+  #high_score_lines<-as.character(existing_sentence_df$sentence[which(existing_sentence_df$block %in% top_scores)])
+  #match_out<-paste(high_score_lines, collapse = " ")
+  # how should I format the returns?
+  #return_list<-list(match_out)
+  
+  return(test_rtn)
+}
+
+format_return<-function(results_df){
+  
+  block_list<-unique(results_df$block)
+  return_list<-list()
+  
+  for (i in 1:length(block_list)){
+    block_lines<-as.character(results_df$sentence[which(results_df$block == block_list[i])])
+    list_name<-unique(as.character(results_df$doc[which(results_df$block == block_list[i])]))
+    match_out<-paste(block_lines, collapse=". ")
+    return_list[i]<-match_out
+    names(return_list)[i]<-paste("Source: ",list_name[1])
+  }
+  return(return_list)
+}
+
+
+#### update stop words ####
+
+update_stop_words<-function(new_stop_word){
+  stop_words<-read.csv("custom_stop_words.csv")
+  custom_words<-data.frame(word = c(new_stop_word),
+                           lexicon = c('custom'))
+  
+  stop_words<-rbind(stop_words,custom_words)
+  write.csv(stop_words, file='custom_stop_words.csv',row.names = FALSE)
+  
+}
+
+
+#### markov generator ####
+
+markov_trigram_db<-function(source_text){
+  suppressWarnings(library(tidyverse))
+  
+  text <- paste(readLines(source_text), collapse = " ")
+  
+  # Preprocess the text
+  text <- tolower(text)  # Convert to lowercase
+  text <- str_replace_all(text, "[[:punct:]]", "")  # Remove punctuation
+  words <- unlist(str_split(text, "\\s+"))  # Split into words
+  
+  # Define n-gram size
+  n <- 3  # For trigrams
+  
+  stack_trans<-matrix(nrow = (length(words)-3), ncol = 4) #for trigram
+  colnames(stack_trans)<- c("w1","w2","w3", "w4")
+  
+  for (i in 1:(length(words)-3)){
+    stack_trans[i,1]<-words[i]
+    stack_trans[i,2]<-words[i+1]
+    stack_trans[i,3]<-words[i+2]
+    stack_trans[i,4]<-words[i+3]
+  }
+  
+  
+  group_stack<-stack_trans%>%
+    as.data.frame()%>%
+    group_by(w1, w2, w3,w4)%>%
+    summarize(n())%>%
+    rename(count = 'n()')
+  
+  return(group_stack)
+}
+
+
+markov_generate<-function(word_1,word_2,word_3, markov_db,length_out){
+  suppressWarnings(library(tidyverse))
+  
+  out_length<-length_out
+  
+  c1<-word_1
+  c2<-word_2
+  c3<-word_3
+  
+  out_vec<-paste(word_1,word_2,word_3)
+
+  for (i in 1:(out_length-2)){
+    
+      stack_tmp<-markov_db[markov_db$w1 == c1 & markov_db$w2 == c2 & markov_db$w3 == c3,]
+      prob_vec<-stack_tmp$count/sum(stack_tmp$count)
+      word_out<-sample(stack_tmp$w4,1,FALSE,prob=prob_vec)
+      out_vec<-paste(out_vec, word_out)
+      c1<-c2
+      c2<-c3
+      c3<-word_out
+    }
+  
+  return(out_vec)
+}
+
+#### summarize #####
+
+top_n_list<-function(old_list, candidate, keep_n){
+
+
+old_list<-sort(old_list, decreasing=TRUE)
+
+if(length(old_list)<keep_n){
+  new_list<-append(old_list, candidate)
+}else{
+  idx<-which(old_list<candidate)[1]
+  new_list<-old_list
+  new_list[idx]<-candidate
+}
+return(new_list)
+}
+
+
+#### classifiers ####
+
+#calc from sparse matrix- whole thing
+
+homebrew_lda<-function(df, y){
+  
+  
+  targ_ind<-which(colnames(df)==y)
+  targ_data<-df[targ_ind]
+  
+  df[is.na(df)]<-0
+  
+  embed<-map_to_low_dim(df[,-targ_ind],variance_threshold=0.8)
+  
+  embed_df<-embed$pc_df
+  embed_df<-cbind(embed_df, targ_data)
+  
+  y_ind<-which(colnames(embed_df)==y)
+  
+  class_means <- t(sapply(split(embed_df[,-y_ind], embed_df[,y_ind]), colMeans))
+  
+  centered_list <- lapply(split(embed_df[,-y_ind], embed_df[,y_ind]), 
+                          function(mat) sweep(mat, 2, colMeans(mat), "-"))
+  
+  pooled_cov <- cov(do.call(rbind, centered_list))
+  
+  inv_cov <- solve(pooled_cov)
+  
+  priors <- prop.table(table(embed_df[y_ind]))
+  
+  
+  score_lda <- function(x_vec) {
+    
+    sapply(seq_len(nrow(class_means)), function(k) {
+      
+      mu_k  <- class_means[k, ]
+      
+      delta <- sum(x_vec * (inv_cov %*% mu_k)) -
+        0.5 * sum(mu_k * (inv_cov %*% mu_k)) +
+        log(priors[k])
+      
+      delta
+    })
+  }
+  
+  predict_lda <- function(newdata) {
+    
+    scores_mat <- t(apply(newdata, 1, score_lda))
+    
+    colnames(scores_mat) <- rownames(class_means)
+    
+    return(
+      list(
+        predictions=factor(colnames(scores_mat)[max.col(scores_mat)],
+                           levels = rownames(class_means)),
+        scores=scores_mat)
+    )
+  }
+  
+  pred_y <- predict_lda(embed_df[,-y_ind])
+  
+  return(pred_y)
+  
+  
+}
+
+
+
+#### fit LDA from a sparse matrix ####
+
+fit_lda<-function(df, y){
+  
+  targ_ind<-which(colnames(df)==y)
+  targ_data<-df[targ_ind]
+  
+  df[is.na(df)]<-0
+  
+  class_means_x <- t(sapply(split(df[,-targ_ind], df[,targ_ind]), colMeans))
+  
+  centered_list <- lapply(split(df[,-targ_ind], df[,targ_ind]), 
+                          function(mat) sweep(mat, 2, colMeans(mat), "-"))
+  
+  pooled_cov <- cov(do.call(rbind, centered_list))
+  
+  inv_cov_x <- solve(pooled_cov)
+  
+  priors_x <- prop.table(table(df[targ_ind]))
+  
+  score_lda <- function(x_vec) {
+    
+    sapply(seq_len(nrow(class_means_x)), function(k) {
+      
+      mu_k  <- class_means_x[k, ]
+      
+      delta <- sum(x_vec * (inv_cov_x %*% mu_k)) -
+        0.5 * sum(mu_k * (inv_cov_x %*% mu_k)) +
+        log(priors_x[k])
+      
+      delta
+    })
+  }
+  
+  pred_lda <- function(newdata) {
+    
+    scores_mat <- t(apply(newdata, 1, score_lda))
+    
+    colnames(scores_mat) <- rownames(class_means_x)
+    
+    return(
+      list(
+        predictions=factor(colnames(scores_mat)[max.col(scores_mat)],
+                           levels = rownames(class_means_x)),
+        scores=scores_mat)
+    )
+  }
+  
+  pred_y <- pred_lda(df[,-targ_ind])
+  
+  params<-list(class_means=class_means_x,
+               inv_cov=inv_cov_x,
+               priors=priors_x)
+  
+  return(list(pred_y=pred_y, params=params))
+  
+  
+}
+
+#### predict LDA from a sparse matrix ####
+
+predict_lda<-function(df, y, lda_obj){
+  
+  y_ind<-which(colnames(df)==y)
+  
+  class_means<-lda_obj$params$class_means
+  inv_cov<-lda_obj$params$inv_cov
+  priors<-lda_obj$params$priors
+
+  score_lda <- function(x_vec) {
+  
+    sapply(seq_len(nrow(class_means)), function(k) {
+    
+      mu_k  <- class_means[k, ]
+    
+      delta <- sum(x_vec * (inv_cov %*% mu_k)) -
+        0.5 * sum(mu_k * (inv_cov %*% mu_k)) +
+        log(priors[k])
+    
+      delta
+    })
+  }
+
+  pred_lda <- function(newdata) {
+  
+    scores_mat <- t(apply(newdata, 1, score_lda))
+  
+    colnames(scores_mat) <- rownames(class_means)
+  
+    return(
+     list(
+        predictions=factor(colnames(scores_mat)[max.col(scores_mat)],
+                          levels = rownames(class_means)),
+        scores=scores_mat)
+    )
+  }
+  pred_y <- pred_lda(df[,-y_ind])
+  
+  return(pred_y)
+  
+}
+
+#### Input functions
+
+pdfs_to_text_csv<-function(pdf_folder='pdf_docs', file_out='study_text.csv'){
+  library(pdftools)
+  suppressWarnings(library(tidyverse))
+  
+  pdf_folder<-'pdf_docs'
+  
+  docs<-list.files(path=pdf_folder)
+  
+  clean_df<-data.frame(matrix(nrow=length(docs), ncol=2))
+  colnames(clean_df)<-c("Doc","Text")
+  
+  
+  for (i in 1:length(docs)){
+    dtr<-docs[i]
+    loc<-paste0(pdf_folder,"/",dtr)
+    txt<-pdf_text(loc)
+    doc_text<-NULL
+    for (k in 1:length(txt)){
+      page<-txt[k]%>%
+        str_split("\\n")%>%
+        unlist()
+      left_side<-NULL
+      right_side<-NULL
+      for (j in 1:length(page)){
+        split_line<-page[j]%>%str_split("\\s{2,}")%>%unlist()
+        left_side<-append(left_side, split_line[1])
+        right_side<-append(right_side, split_line[2])
+      }
+      page_name<-paste0("Doc_",i,"_page_",k)
+      page_lines<-append(left_side, right_side)
+      page_text<-paste(page_lines, collapse=" ")
+      doc_text<-append(doc_text, page_text)
+    }
+    clean_df[i,1]<-dtr
+    clean_df[i,2]<-paste(doc_text, collapse=" ")%>%
+      str_replace_all("\\s+NA\\s+","")%>%
+      str_replace_all("REFERENCES[:]?\\s+.*","")%>%
+      str_replace_all("References[:]?\\s+.*","")
+    
+  }
+  write.csv(clean_df, file = file_out, row.names = FALSE)
+}
+
+#### Revised Embedding Functions ####
+power_iter_custom <- function(mult_fun,
+                              dim,          # dimension of the square operator (p here)
+                              max.it = 100,
+                              eps = 1e-10) {
+  # Initialise a random unit vector of length 'dim'
+  b <- rnorm(dim)
+  b <- b / sqrt(sum(b^2))
+  
+  for (k in seq_len(max.it)) {
+    # ---- custom multiplication ----
+    b_new <- mult_fun(b)                 # returns a vector of length 'dim'
+    
+    # Normalise
+    norm_b <- sqrt(sum(b_new^2))
+    if (norm_b == 0) break               # zero eigenvalue reached
+    b_new <- as.vector(b_new / norm_b)
+    
+    # Convergence test
+    if (sqrt(sum((b_new - b)^2)) < eps) break
+    b <- b_new
+  }
+  
+  list(vec = b,          # unit eigenvector
+       norm = norm_b,    # |λ|  (Rayleigh quotient)
+       it   = k)
+}
+
+
+make_deflated_mult <- function(A, prev_vs, prev_lambdas) {
+  # prev_vs   : list of previously extracted eigenvectors (each length p)
+  # prev_lambdas : numeric vector of corresponding eigenvalues (λ = σ²)
+  function(x) {
+    # Core term: Aᵀ (A x)
+    y <- A %*% x                # size m
+    out <- as.vector(t(A) %*% y)  # size p
+    
+    # Subtract all rank‑1 contributions accumulated so far
+    if (length(prev_vs) > 0) {
+      for (j in seq_along(prev_vs)) {
+        vj   <- prev_vs[[j]]
+        lamj <- prev_lambdas[j]
+        # λ_j * v_j * (v_jᵀ x)  =  (λ_j * (v_jᵀ x)) * v_j
+        coeff <- lamj * sum(vj * x)   # scalar = λ_j * (v_jᵀ x)
+        out   <- out - coeff * vj
+      }
+    }
+    out
+  }
+}
+
+extract_svd_power <- function(A,
+                              k.max = 5,
+                              max.it = 100,
+                              eps = 1e-12) {
+  p <- ncol(A)                         # dimension of the Gram matrix C
+  # Containers
+  Vlist <- vector("list", k.max)       # right singular vectors (loadings)
+  Ulist <- vector("list", k.max)       # left singular vectors (scores)
+  sigma_vals <- numeric(k.max)
+  
+  # Keep track of previous eigenvectors/eigenvalues for deflation
+  prev_vs   <- list()
+  prev_lams <- numeric()
+  
+  for (j in seq_len(k.max)) {
+    # Build the multiplication routine for the *current* deflated operator
+    mult_fun <- make_deflated_mult(A, prev_vs, prev_lams)
+    
+    # Power iteration on the implicit C
+    pw <- power_iter_custom(mult_fun = mult_fun,
+                            dim = p,
+                            max.it = max.it,
+                            eps = eps)
+    
+    vj   <- pw$vec                     # loading (unit)
+    lamj <- pw$norm                    # λ_j = σ_j²
+    sigma_j <- sqrt(lamj)              # singular value
+    
+    # Left singular vector (scores)
+    uj <- as.vector(A %*% vj) / sigma_j
+    
+    # Store results
+    Vlist[[j]]   <- vj
+    Ulist[[j]]   <- uj
+    sigma_vals[j] <- sigma_j
+    
+    # Update deflation bookkeeping
+    prev_vs[[j]]   <- vj
+    prev_lams[j]   <- lamj
+    
+    # Optional early stop if singular value becomes tiny
+    if (sigma_j < 1e-8) break
+  }
+  
+  # Assemble matrices (columns = components)
+  V_mat <- do.call(cbind, Vlist)
+  U_mat <- do.call(cbind, Ulist)
+  
+  list(u = U_mat, d = sigma_vals, v = V_mat)
+}
+
+
+#### Revised TFIDF Code ####
+
+make_tfidf_quickly<-function(sentence_col, block_col){
+  
+  #### split out words and create key value triplets
+  punct_patt<-"[^A-Za-z0-9\\s]+"
+  
+  word_list <- strsplit(sentence_col, "\\s+")
+  sentence_id <- rep(block_col, lengths(word_list))   
+  words       <- unlist(word_list, use.names = FALSE)%>%
+    str_to_lower()%>%
+    str_replace_all(punct_patt, "")
+  
+  stop_words_list<-unique(stop_words$word)%>%append("", after=0)
+  stop_index<-which(words %in% stop_words_list)
+  
+  clean_words<-words[-stop_index]
+  revised_blocks<-sentence_id[-stop_index]
+  
+  word_tbl<- table(revised_blocks, clean_words)
+  
+  nz<-which(word_tbl >0, arr.ind = TRUE)
+  
+  value<-word_tbl[nz] #count of word in given block
+  row_idx   <- rownames(word_tbl)[nz[,1]] #non-zero blocks
+  col_idx <- colnames(word_tbl)[nz[,2]]  #non-zero words
+  
+  
+  #number each unique term
+  terms<- sort(unique(col_idx))            
+  term_id<- setNames(seq_along(terms), terms)
+  col_num<- term_id[col_idx]             
+  
+  #calc doc freq- how many blocks does each term appear in?
+  df <- tabulate(col_num, nbins = length(terms))
+  
+  
+  N   <- length(unique(row_idx))
+  idf <- log((N + 1) / (df + 1)) + 1
+  block_names<-unique(row_idx)
+  
+  tfidf_val <- value * idf[col_num] #each non-zero term gets an idf value
+  
+  tfidf_mat <- matrix(0,
+                      nrow = N,
+                      ncol = length(terms),
+                      dimnames = list(block_names, terms))
+  idx<-cbind(match(row_idx, block_names),
+             match(col_idx, terms))
+  
+  
+  tfidf_mat[idx]<-tfidf_val
+  
+  vocab<-terms
+  
+  idf_data<-idf
+  names(idf_data)<-terms
+  
+  return(list(tfidf=tfidf_mat,vocab=terms,idf=idf_data))
+         
+  
+}
