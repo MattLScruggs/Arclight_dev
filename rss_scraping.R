@@ -76,9 +76,7 @@ read_rss_feeds<-function(rss_list){
 }
 
 
-rss_feeds<-c("https://www.send2press.com/wire/feed/"
-             ,"https://www.pr.com/rss/press-releases.xml"
-             ,"https://feeds.bbci.co.uk/news/world/rss.xml"
+rss_feeds<-c("https://feeds.bbci.co.uk/news/world/rss.xml"
              ,"https://feeds.nbcnews.com/nbcnews/public/news"
              ,"https://www.cnbc.com/id/100727362/device/rss/rss.html"
              ,"https://abcnews.go.com/abcnews/internationalheadlines"
@@ -100,20 +98,14 @@ rss_feeds<-c("https://www.send2press.com/wire/feed/"
              ,"https://feeds.nbcnews.com/nbcnews/public/news"
              ,"https://abcnews.go.com/abcnews/topstories"
              ,"https://www.cbsnews.com/latest/rss/main"
-             ,"https://www.politico.com/rss/politicopicks.xml"
              ,"https://www.latimes.com/local/rss2.0.xml"
-             ,"https://www.mercurynews.com/feed/"
              ,"http://www.stltoday.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc&k%5B%5D=%23topstory"
-             ,"https://www.seattletimes.com/feed/"
-             ,"https://www.chicagotribune.com/feed/"
              ,"https://chicago.suntimes.com/rss/index.xml"
              ,"https://www.minnpost.com/feed/"
              ,"https://wtop.com/feed/"
-             ,"https://www.nydailynews.com/feed/"
              ,"https://feeds.businessinsider.com/custom/all"
              ,"https://theintercept.com/feed/?lang=en"
              ,"https://www.newsweek.com/rss"
-             ,"https://www.yahoo.com/news/rss"
              ,"https://www.boston.com/feed/"
              ,"https://wgntv.com/feed/"
              ,"https://ktla.com/feed/"
@@ -137,33 +129,25 @@ rss_feeds<-c("https://www.send2press.com/wire/feed/"
              ,"https://www.nbcmiami.com/?rss=y"
              ,"https://www.dailyherald.com/rssfeed/top-stories/"
              ,"https://www.newsday.com/api/rss/recent"
-             ,"https://www.usnews.com/rss/news.xml"
-             ,"https://www.cbsnews.com/latest/rss/main/"
-             ,"https://www.twincities.com/feed/"
              ,"https://www.phillyvoice.com/feed/"
              ,"https://timesofsandiego.com/feed/"
              ,"https://www.miamitodaynews.com/feed/"
              ,"https://www.texasobserver.org/feed/"
              ,"https://www.westword.com/denver/Rss.xml"
-             ,"https://www.houstonpress.com/houston/Rss.xml"
              ,"https://www.metrotimes.com/detroit/Rss.xml"
              ,"https://observer.com/feed/"
              ,"https://www.miaminewtimes.com/feed"
              ,"https://www.phoenixnewtimes.com/feed"
              ,"https://chicagoreader.com/feed/"
-             ,"https://www.laweekly.com/feed/"
              ,"https://www.salon.com/feed"
              ,"https://www.washingtontimes.com/rss/headlines/news"
              ,"https://foresthillstimes.com/feed/"
-             ,"https://www.publishedreporter.com/feed/"
              ,"https://www.kens5.com/feeds/syndication/rss/news"
 )
 
 daily_refresh<-read_rss_feeds(rss_feeds)
 
-db_con<-dbConnect(SQLite(),"C:/Users/matth/OneDrive/Documents/Arclight/R_code_and_data/data/feeds.db")
-
-
+db_con<-dbConnect(SQLite(),"C:/Users/matth/Projects/Data/feeds.db")
 
 query <- "INSERT OR IGNORE INTO rss_feeds (titles, descs, pub_dates, links, feed_title) VALUES (?, ?, ?, ?, ?)"
 

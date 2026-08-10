@@ -4,7 +4,7 @@ library(xml2)
 library(purrr)   
 library(stringr) 
 library(tidyverse)
-setwd("~/Arclight/R code and data")
+
 
 
 base_url   <- "https://apnews.com"  
