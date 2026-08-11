@@ -1,97 +1,113 @@
-library(httr)    
-library(rvest)  
-library(xml2)    
-library(purrr)   
-library(stringr) 
-library(tidyverse)
+# Functions to (respectfully) scrape the contents of a page, or set of pages
 
-
-
-base_url   <- "https://apnews.com"  
-list_path  <- "/health"  
-#list_path<- NULL
-list_url   <- paste0(base_url, list_path)
-
-
-resp_home <- GET(list_url)
-
-if (http_error(resp_home)) {
-  stop("Could not retrieve the listing page – check the URL or your network.")
-}
-
-html_home <- read_html(content(resp_home, as = "text", encoding = "UTF-8"))
-
-article_selector <- "a.Link"   
-
-raw_links <- html_home %>%
-  html_nodes(article_selector) %>%     
-  html_attr("href")                   
-
-# Convert possible relative URLs to absolute URLs
-article_urls <- raw_links %>%
-  map_chr(~ url_absolute(.x, base_url)) %>%
-  unique()
-
-url<-article_urls[5]
-
-scrape_article <- function(url) {
-  resp <- GET(url)
+scrape_article <- function(url, 
+                           article_attributes=list(title_sel = "h1.Page-headline",
+                                                          date_sel = "bsp-timestamp",
+                                                          date_attr = "data-timestamp",
+                                                          body_sel = "div.RichTextStoryBody",
+                                                          body_paragraphs = "p")) {
+  library(magrittr)
   
-  page <- read_html(content(resp, as = "text", encoding = "UTF-8"))
+  title_sel<-article_attributes$title_sel
+  date_sel<-article_attributes$date_sel
+  date_attr<-article_attributes$date_attr
+  body_sel<-article_attributes$body_sel
+  body_paragraphs<-article_attributes$body_paragraphs
   
-
-  title_sel  <- "h1.Page-headline"         
-  date_sel   <- "bsp-timestamp"            
-  body_sel   <- "div.RichTextStoryBody"       
   
-
+  resp <- httr::GET(url)
+  
+  page <- rvest::read_html(httr::content(resp, as = "text", encoding = "UTF-8"))
+  
   title <- page%>%
-    html_element(title_sel)%>%
-    html_text(trim = TRUE)
+    rvest::html_element(title_sel)%>%
+    rvest::html_text(trim = TRUE)
   
   date_raw <- page%>%
-    html_element(date_sel)%>%
-    html_attr("data-timestamp")%>%
+    rvest::html_element(date_sel)%>%
+    rvest::html_attr(date_attr)%>%
     as.numeric()
-    
+  
   body_vec <- page%>%
-    html_elements(body_sel)%>%
-    html_elements("p")%>%
-    html_text(trim = TRUE)
+    rvest::html_elements(body_sel)%>%
+    rvest::html_elements(body_paragraphs)%>%
+    rvest::html_text(trim = TRUE)
   
   date  <- as.Date(as.POSIXct((date_raw/1000), origin = "1970-01-01"))
   body  <- paste(body_vec, collapse=" ")
-
-return(list(url=url,
-                  title=title, 
-                  date=date,
-                  body=body))
+  
+  return(list(url=url,
+              title=title, 
+              date=date,
+              body=body))
   
 }
 
+get_story_list<-function(list_url, 
+                         link_attributes=list(article_selector = "a.Link",
+                                              article_attribute = "href")){
+  library(magrittr)
+  
+  article_selector<-link_attributes$article_selector
+  article_attribute<-link_attributes$article_attribute
+  
+  resp_home <- httr::GET(list_url)
 
-article_table<-data.frame(matrix(nrow=length(article_urls), ncol = 4))
-colnames(article_table)<-c("Doc","Title","Date","Text")
+  html_home <- rvest::read_html(httr::content(resp_home, as = "text", encoding = "UTF-8"))
+
+  raw_links <- html_home %>%
+    rvest::html_nodes(article_selector) %>%     
+    rvest::html_attr(article_attribute)                   
 
 
-for (i in 1:nrow(article_table)){
-  scr<-scrape_article(article_urls[i])
-  article_table[i,1]<-scr$url
-  article_table[i,2]<-scr$title
-  article_table[i,3]<-scr$date
-  article_table[i,4]<-scr$body
-  Sys.sleep(1)
+  article_urls <- raw_links %>%
+    purrr::map_chr(~ xml2::url_absolute(.x, list_url)) %>%
+    unique()
+  
+  return(article_urls)
 }
 
-article_table$Date<-as.Date(article_table$Date)
-article_table<-drop_na(article_table)
-article_table<-article_table[article_table$Text != "",]
- 
-current_date<-Sys.Date()
-#article_table<-article_table[article_table$Date == current_date,]
+create_story_table<-function(list_url, 
+                             link_attributes=list(article_selector = "a.Link",
+                                                            article_attribute = "href"),
+                             article_attributes=list(title_sel = "h1.Page-headline",
+                                                     date_sel = "bsp-timestamp",
+                                                     date_attr = "data-timestamp",
+                                                     body_sel = "div.RichTextStoryBody",
+                                                     body_paragraphs = "p")){
+
+  article_urls<-get_story_list(list_url, link_attributes)
+  
+  article_table<-data.frame(matrix(nrow=length(article_urls), ncol = 4))
+  colnames(article_table)<-c("Doc","Title","Date","Text")
+
+
+  for (i in 1:nrow(article_table)){
+    scr<-scrape_article(article_urls[i], article_attributes)
+    article_table[i,1]<-scr$url
+    article_table[i,2]<-scr$title
+    article_table[i,3]<-scr$date
+    article_table[i,4]<-scr$body
+    Sys.sleep(2)
+  }
+
+  article_table$Date<-as.Date(article_table$Date)
+  article_table<-tidyr::drop_na(article_table)
+  article_table<-article_table[article_table$Text != "",]
+
+
+  return(article_table)
+
+}
+
+
+test_table<-create_story_table("https://apnews.com/health")
+
+
+
 
 
 write.table(article_table, file=paste0(current_date,"_AP_News_Health.txt"),sep = "|",
             row.names=FALSE, quote=FALSE)
 
-#test<-read.table('2026-02-11_AP_News_Health.txt', sep="|", quote = "", header=TRUE)
+
