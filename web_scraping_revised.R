@@ -56,7 +56,7 @@ get_story_list<-function(list_url,
   html_home <- rvest::read_html(httr::content(resp_home, as = "text", encoding = "UTF-8"))
 
   raw_links <- html_home %>%
-    rvest::html_nodes(article_selector) %>%     
+    rvest::html_elements(article_selector) %>%     
     rvest::html_attr(article_attribute)                   
 
 
@@ -101,13 +101,6 @@ create_story_table<-function(list_url,
 }
 
 
-test_table<-create_story_table("https://apnews.com/health")
 
-
-
-
-
-write.table(article_table, file=paste0(current_date,"_AP_News_Health.txt"),sep = "|",
-            row.names=FALSE, quote=FALSE)
 
 
